@@ -33,6 +33,10 @@ enum Commands {
         #[command(subcommand)]
         subcommand: CapabilityCommands,
     },
+    Skill {
+        #[command(subcommand)]
+        subcommand: SkillCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -64,6 +68,29 @@ enum CapabilityCommands {
     List {
         #[arg(long)]
         category: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommands {
+    List {
+        #[arg(long)]
+        category: Option<String>,
+    },
+    Info {
+        #[arg(long)]
+        name: String,
+    },
+    Call {
+        #[arg(long)]
+        name: String,
+
+        #[arg(long)]
+        params: Option<String>,
+    },
+    Execute {
+        #[arg(long)]
+        goal: String,
     },
 }
 
@@ -102,6 +129,9 @@ fn main() {
         }
         Commands::Capability { subcommand } => {
             handle_capability_command(subcommand);
+        }
+        Commands::Skill { subcommand } => {
+            handle_skill_command(subcommand);
         }
     }
 }
@@ -320,6 +350,163 @@ fn handle_capability_command(cmd: CapabilityCommands) {
                     println!("  {} [{}]", name, action.type_name);
                 }
             }
+        }
+    }
+}
+
+fn handle_skill_command(cmd: SkillCommands) {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use zeroinsect::capability_map::{CapabilityClassifier, CapabilityMap};
+    use zeroinsect::introspect::runtime::RosRuntimeIntrospector;
+    use zeroinsect::skill_executor::{SkillCategory, SkillExecutor, SkillLoader, SkillRegistry};
+
+    match cmd {
+        SkillCommands::List { category } => {
+            println!("Loading skills from ROS system...");
+
+            let mut introspector = RosRuntimeIntrospector::new();
+            let snapshot = match introspector.capture_snapshot() {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("Error capturing snapshot: {}", e);
+                    return;
+                }
+            };
+
+            let classifier = CapabilityClassifier::new();
+            let cap_map = classifier.classify(&snapshot);
+
+            let loader = SkillLoader::new();
+            let skills = loader.generate_from_capability_map(&cap_map);
+
+            let mut registry = SkillRegistry::new();
+            for skill in skills {
+                registry.register(skill);
+            }
+
+            println!("\n=== Available Skills ===");
+
+            if let Some(cat) = category {
+                let cat_enum = match cat.to_lowercase().as_str() {
+                    "motion" => Some(SkillCategory::Motion),
+                    "perception" => Some(SkillCategory::Perception),
+                    "manipulation" => Some(SkillCategory::Manipulation),
+                    "navigation" => Some(SkillCategory::Navigation),
+                    _ => None,
+                };
+
+                if let Some(c) = cat_enum {
+                    let skills = registry.list_by_category(&c);
+                    for skill in skills {
+                        println!(
+                            "  ✦ {} - {}",
+                            skill.metadata.name, skill.metadata.description
+                        );
+                    }
+                }
+            } else {
+                for skill in registry.list_all() {
+                    println!(
+                        "  ✦ {} - {}",
+                        skill.metadata.name, skill.metadata.description
+                    );
+                }
+            }
+        }
+
+        SkillCommands::Info { name } => {
+            println!("Getting skill info: {}", name);
+
+            let mut introspector = RosRuntimeIntrospector::new();
+            if let Ok(snapshot) = introspector.capture_snapshot() {
+                let classifier = CapabilityClassifier::new();
+                let cap_map = classifier.classify(&snapshot);
+                let loader = SkillLoader::new();
+                let skills = loader.generate_from_capability_map(&cap_map);
+
+                let mut registry = SkillRegistry::new();
+                for skill in skills {
+                    registry.register(skill);
+                }
+
+                if let Some(skill) = registry.get(&name) {
+                    println!("\n=== Skill: {} ===", skill.metadata.name);
+                    println!("Description: {}", skill.metadata.description);
+                    println!("Category: {}", skill.metadata.category);
+                    println!("Capability: {:?}", skill.capability.cap_type);
+                    println!("ROS Name: {}", skill.capability.ros_name);
+                    println!("ROS Type: {}", skill.capability.ros_type);
+
+                    if !skill.parameters.is_empty() {
+                        println!("\nParameters:");
+                        for param in &skill.parameters {
+                            let req = if param.required { " (required)" } else { "" };
+                            println!("  - {}{}: {}", param.name, req, param.param_type);
+                        }
+                    }
+
+                    if !skill.returns.is_empty() {
+                        println!("\nReturns:");
+                        for ret in &skill.returns {
+                            println!("  - {}: {}", ret.name, ret.return_type);
+                        }
+                    }
+                } else {
+                    println!("Skill not found: {}", name);
+                }
+            }
+        }
+
+        SkillCommands::Call { name, params } => {
+            println!("Calling skill: {}", name);
+
+            let mut introspector = RosRuntimeIntrospector::new();
+            if let Ok(snapshot) = introspector.capture_snapshot() {
+                let classifier = CapabilityClassifier::new();
+                let cap_map = classifier.classify(&snapshot);
+                let loader = SkillLoader::new();
+                let skills = loader.generate_from_capability_map(&cap_map);
+
+                let mut registry = SkillRegistry::new();
+                for skill in skills {
+                    registry.register(skill);
+                }
+
+                let executor = SkillExecutor::new(Arc::new(registry)).with_mock_mode(true);
+
+                let mut param_map = HashMap::new();
+                if let Some(p) = params {
+                    for pair in p.split(',') {
+                        let parts: Vec<&str> = pair.split('=').collect();
+                        if parts.len() == 2 {
+                            param_map.insert(parts[0].to_string(), serde_json::json!(parts[1]));
+                        }
+                    }
+                }
+
+                let request = zeroinsect::skill_executor::SkillRequest {
+                    skill_name: name,
+                    parameters: param_map,
+                    timeout_ms: Some(5000),
+                };
+
+                let response = executor.execute(request);
+
+                if response.success {
+                    println!("\n✓ Success!");
+                    println!("Result: {}", response.result);
+                    println!("Execution time: {}ms", response.execution_time_ms);
+                } else {
+                    println!("\n✗ Error: {}", response.message);
+                }
+            }
+        }
+
+        SkillCommands::Execute { goal } => {
+            println!("Executing goal: {}", goal);
+            println!("\n(Note: LLM integration not implemented yet.)");
+            println!("Use 'skill call' to execute specific skills.");
         }
     }
 }
