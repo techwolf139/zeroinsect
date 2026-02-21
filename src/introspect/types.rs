@@ -388,4 +388,68 @@ pub mod capability {
             }
         }
     }
+
+    pub fn topic_to_publisher_card(topic: &super::topic::TopicInfo) -> CapabilityCard {
+        let mut card = CapabilityCard::new(
+            &topic.name,
+            CapabilityType::TopicPublisher,
+            &topic.type_name,
+        );
+        card.description = format!("Publish to {} topic", topic.name);
+        card.call_template = CallTemplate {
+            tool_name: "ros2_topic_pub".to_string(),
+            args_template: serde_json::json!({
+                "topic": topic.name,
+                "type": topic.type_name,
+                "data": {}
+            }),
+        };
+        card
+    }
+
+    pub fn topic_to_subscriber_card(topic: &super::topic::TopicInfo) -> CapabilityCard {
+        let mut card = CapabilityCard::new(
+            &topic.name,
+            CapabilityType::TopicSubscriber,
+            &topic.type_name,
+        );
+        card.description = format!("Subscribe to {} topic", topic.name);
+        card.call_template = CallTemplate {
+            tool_name: "ros2_topic_sub".to_string(),
+            args_template: serde_json::json!({
+                "topic": topic.name,
+                "type": topic.type_name
+            }),
+        };
+        card
+    }
+
+    pub fn service_to_card(service: &super::service::ServiceInfo) -> CapabilityCard {
+        let mut card =
+            CapabilityCard::new(&service.name, CapabilityType::Service, &service.type_name);
+        card.description = format!("Call {} service", service.name);
+        card.call_template = CallTemplate {
+            tool_name: "ros2_service_call".to_string(),
+            args_template: serde_json::json!({
+                "service": service.name,
+                "type": service.type_name,
+                "request": {}
+            }),
+        };
+        card
+    }
+
+    pub fn action_to_card(action: &super::action::ActionInfo) -> CapabilityCard {
+        let mut card = CapabilityCard::new(&action.name, CapabilityType::Action, &action.type_name);
+        card.description = format!("Execute {} action", action.name);
+        card.call_template = CallTemplate {
+            tool_name: "ros2_action_send_goal".to_string(),
+            args_template: serde_json::json!({
+                "action": action.name,
+                "type": action.type_name,
+                "goal": {}
+            }),
+        };
+        card
+    }
 }
