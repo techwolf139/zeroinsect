@@ -7,3 +7,4 @@ pub mod safety;
 pub mod swarm;
 pub mod bridge;
 pub mod capability_map;
+pub mod skill_executor;
