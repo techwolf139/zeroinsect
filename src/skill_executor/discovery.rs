@@ -72,7 +72,7 @@ impl SkillDiscovery {
         all_skills
     }
 
-    fn scan_skill_directory(&self, dir: &Path, source: SkillSource) -> Vec<DiscoveredSkill> {
+    pub fn scan_skill_directory(&self, dir: &Path, source: SkillSource) -> Vec<DiscoveredSkill> {
         let mut skills = Vec::new();
 
         if !dir.is_dir() {

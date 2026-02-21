@@ -76,6 +76,8 @@ enum SkillCommands {
     List {
         #[arg(long)]
         category: Option<String>,
+        #[arg(long)]
+        source: Option<String>,
     },
     Info {
         #[arg(long)]
@@ -374,55 +376,149 @@ fn handle_skill_command(cmd: SkillCommands) {
     use zeroinsect::skill_executor::{SkillCategory, SkillExecutor, SkillLoader, SkillRegistry};
 
     match cmd {
-        SkillCommands::List { category } => {
-            println!("Loading skills from ROS system...");
+        SkillCommands::List { category, source } => {
+            use zeroinsect::skill_executor::{DiscoveredSkill, SkillDiscovery, SkillSource};
 
-            let mut introspector = RosRuntimeIntrospector::new();
-            let snapshot = match introspector.capture_snapshot() {
-                Ok(s) => s,
-                Err(e) => {
-                    println!("Error capturing snapshot: {}", e);
-                    return;
-                }
-            };
+            match source.as_deref() {
+                Some("ros") | None => {
+                    println!("Loading skills from ROS system...");
 
-            let classifier = CapabilityClassifier::new();
-            let cap_map = classifier.classify(&snapshot);
+                    let mut introspector = RosRuntimeIntrospector::new();
+                    let snapshot = match introspector.capture_snapshot() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            println!("Error capturing snapshot: {}", e);
+                            return;
+                        }
+                    };
 
-            let loader = SkillLoader::new();
-            let skills = loader.generate_from_capability_map(&cap_map);
+                    let classifier = CapabilityClassifier::new();
+                    let cap_map = classifier.classify(&snapshot);
 
-            let mut registry = SkillRegistry::new();
-            for skill in skills {
-                registry.register(skill);
-            }
+                    let loader = SkillLoader::new();
+                    let skills = loader.generate_from_capability_map(&cap_map);
 
-            println!("\n=== Available Skills ===");
-
-            if let Some(cat) = category {
-                let cat_enum = match cat.to_lowercase().as_str() {
-                    "motion" => Some(SkillCategory::Motion),
-                    "perception" => Some(SkillCategory::Perception),
-                    "manipulation" => Some(SkillCategory::Manipulation),
-                    "navigation" => Some(SkillCategory::Navigation),
-                    _ => None,
-                };
-
-                if let Some(c) = cat_enum {
-                    let skills = registry.list_by_category(&c);
+                    let mut registry = SkillRegistry::new();
                     for skill in skills {
-                        println!(
-                            "  ✦ {} - {}",
-                            skill.metadata.name, skill.metadata.description
-                        );
+                        registry.register(skill);
+                    }
+
+                    println!("\n=== ROS Skills ===");
+
+                    if let Some(cat) = category {
+                        let cat_enum = match cat.to_lowercase().as_str() {
+                            "motion" => Some(SkillCategory::Motion),
+                            "perception" => Some(SkillCategory::Perception),
+                            "manipulation" => Some(SkillCategory::Manipulation),
+                            "navigation" => Some(SkillCategory::Navigation),
+                            _ => None,
+                        };
+
+                        if let Some(c) = cat_enum {
+                            let skills = registry.list_by_category(&c);
+                            for skill in skills {
+                                println!(
+                                    "  ✦ {} - {}",
+                                    skill.metadata.name, skill.metadata.description
+                                );
+                            }
+                        }
+                    } else {
+                        for skill in registry.list_all() {
+                            println!(
+                                "  ✦ {} - {}",
+                                skill.metadata.name, skill.metadata.description
+                            );
+                        }
                     }
                 }
-            } else {
-                for skill in registry.list_all() {
-                    println!(
-                        "  ✦ {} - {}",
-                        skill.metadata.name, skill.metadata.description
-                    );
+                Some("opencode") => {
+                    let discovery = SkillDiscovery::new();
+                    let skills = discovery.discover_from_opencode();
+                    print_discovered_skills("OpenCode", &skills, category.as_deref());
+                }
+                Some("zeroclaw") | Some("config") => {
+                    let discovery = SkillDiscovery::new();
+                    let skills = discovery.discover_from_config();
+                    print_discovered_skills("ZeroClaw/Config", &skills, category.as_deref());
+                }
+                Some("local") => {
+                    let discovery = SkillDiscovery::new();
+                    let local_skills = std::path::PathBuf::from("./skills");
+                    let skills = if local_skills.exists() {
+                        discovery.scan_skill_directory(&local_skills, SkillSource::Local)
+                    } else {
+                        vec![]
+                    };
+                    print_discovered_skills("Local", &skills, category.as_deref());
+                }
+                Some("linked") => {
+                    let discovery = SkillDiscovery::new();
+                    let skills = discovery.list_linked_skills();
+                    print_discovered_skills("Linked", &skills, category.as_deref());
+                }
+                Some("all") => {
+                    let discovery = SkillDiscovery::new();
+                    let all_skills = discovery.discover_from_standard_locations();
+
+                    let mut by_source: std::collections::HashMap<String, Vec<DiscoveredSkill>> =
+                        std::collections::HashMap::new();
+                    for skill in &all_skills {
+                        let key = format!("{:?}", skill.source);
+                        by_source
+                            .entry(key)
+                            .or_insert_with(Vec::new)
+                            .push(skill.clone());
+                    }
+
+                    for (source_name, skills) in by_source {
+                        print_discovered_skills(&source_name, &skills, category.as_deref());
+                    }
+
+                    println!("\n=== ROS Skills ===");
+                    let mut introspector = RosRuntimeIntrospector::new();
+                    if let Ok(snapshot) = introspector.capture_snapshot() {
+                        let classifier = CapabilityClassifier::new();
+                        let cap_map = classifier.classify(&snapshot);
+                        let loader = SkillLoader::new();
+                        let skills = loader.generate_from_capability_map(&cap_map);
+
+                        let mut registry = SkillRegistry::new();
+                        for skill in skills {
+                            registry.register(skill);
+                        }
+
+                        if let Some(cat) = category {
+                            let cat_enum = match cat.to_lowercase().as_str() {
+                                "motion" => Some(SkillCategory::Motion),
+                                "perception" => Some(SkillCategory::Perception),
+                                "manipulation" => Some(SkillCategory::Manipulation),
+                                "navigation" => Some(SkillCategory::Navigation),
+                                _ => None,
+                            };
+
+                            if let Some(c) = cat_enum {
+                                let skills = registry.list_by_category(&c);
+                                for skill in skills {
+                                    println!(
+                                        "  ✦ {} - {}",
+                                        skill.metadata.name, skill.metadata.description
+                                    );
+                                }
+                            }
+                        } else {
+                            for skill in registry.list_all() {
+                                println!(
+                                    "  ✦ {} - {}",
+                                    skill.metadata.name, skill.metadata.description
+                                );
+                            }
+                        }
+                    }
+                }
+                Some(unknown) => {
+                    println!("Unknown source: {}", unknown);
+                    println!("Available sources: ros, opencode, zeroclaw, local, linked, all");
                 }
             }
         }
@@ -522,7 +618,7 @@ fn handle_skill_command(cmd: SkillCommands) {
         }
 
         SkillCommands::Discover { source } => {
-            use zeroinsect::skill_executor::{SkillDiscovery, SkillSource};
+            use zeroinsect::skill_executor::SkillDiscovery;
 
             let discovery = SkillDiscovery::new();
 
@@ -606,6 +702,44 @@ fn handle_skill_command(cmd: SkillCommands) {
                     println!("✗ Error: {}", e);
                 }
             }
+        }
+    }
+}
+
+fn print_discovered_skills(
+    source_name: &str,
+    skills: &[zeroinsect::skill_executor::DiscoveredSkill],
+    category_filter: Option<&str>,
+) {
+    use zeroinsect::skill_executor::SkillCategory;
+
+    if skills.is_empty() {
+        return;
+    }
+
+    println!("\n=== {} Skills ===", source_name);
+
+    if let Some(cat) = category_filter {
+        let cat_enum = match cat.to_lowercase().as_str() {
+            "motion" => Some(SkillCategory::Motion),
+            "perception" => Some(SkillCategory::Perception),
+            "manipulation" => Some(SkillCategory::Manipulation),
+            "navigation" => Some(SkillCategory::Navigation),
+            _ => None,
+        };
+
+        if let Some(_c) = cat_enum {
+            for skill in skills {
+                let has_toml = if skill.has_skill_toml { " [TOML]" } else { "" };
+                let has_md = if skill.has_skill_md { " [MD]" } else { "" };
+                println!("  ✦ {}{}{}", skill.name, has_toml, has_md);
+            }
+        }
+    } else {
+        for skill in skills {
+            let has_toml = if skill.has_skill_toml { " [TOML]" } else { "" };
+            let has_md = if skill.has_skill_md { " [MD]" } else { "" };
+            println!("  ✦ {}{}{}", skill.name, has_toml, has_md);
         }
     }
 }
