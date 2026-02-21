@@ -1,6 +1,4 @@
-use crate::capability_map::graph::{
-    CapabilityCategory, CapabilityMap,
-};
+use crate::capability_map::graph::{CapabilityCategory, CapabilityMap};
 use crate::skill_executor::registry::{
     CapabilityRef, CapabilityRefType, Condition, Effect, ParameterDef, ReturnDef, RosSkill,
     SkillCategory,

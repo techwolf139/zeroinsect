@@ -92,6 +92,18 @@ enum SkillCommands {
         #[arg(long)]
         goal: String,
     },
+    Discover {
+        #[arg(long)]
+        source: Option<String>,
+    },
+    Link {
+        #[arg(long)]
+        path: String,
+    },
+    Unlink {
+        #[arg(long)]
+        name: String,
+    },
 }
 
 fn main() {
@@ -507,6 +519,93 @@ fn handle_skill_command(cmd: SkillCommands) {
             println!("Executing goal: {}", goal);
             println!("\n(Note: LLM integration not implemented yet.)");
             println!("Use 'skill call' to execute specific skills.");
+        }
+
+        SkillCommands::Discover { source } => {
+            use zeroinsect::skill_executor::{SkillDiscovery, SkillSource};
+
+            let discovery = SkillDiscovery::new();
+
+            println!("Discovering skills...\n");
+
+            if let Some(s) = source {
+                match s.as_str() {
+                    "opencode" => {
+                        let skills = discovery.discover_from_opencode();
+                        println!("=== OpenCode Skills ===");
+                        for skill in skills {
+                            println!("  ✦ {} ({})", skill.name, skill.path.display());
+                        }
+                    }
+                    "config" => {
+                        let skills = discovery.discover_from_config();
+                        println!("=== Config/Agent Skills ===");
+                        for skill in skills {
+                            println!("  ✦ {} ({})", skill.name, skill.path.display());
+                        }
+                    }
+                    _ => {
+                        println!("Unknown source: {}. Use 'opencode' or 'config'", s);
+                    }
+                }
+            } else {
+                let skills = discovery.discover_from_standard_locations();
+                println!("=== Discovered Skills ===");
+
+                let mut by_source: std::collections::HashMap<String, Vec<String>> =
+                    std::collections::HashMap::new();
+                for skill in &skills {
+                    let key = format!("{:?}", skill.source);
+                    by_source
+                        .entry(key)
+                        .or_insert_with(Vec::new)
+                        .push(skill.name.clone());
+                }
+
+                for (source, names) in by_source {
+                    println!("\n[{}]", source);
+                    for name in names {
+                        println!("  ✦ {}", name);
+                    }
+                }
+
+                println!("\nTotal: {} skills found", skills.len());
+            }
+        }
+
+        SkillCommands::Link { path } => {
+            use zeroinsect::skill_executor::SkillDiscovery;
+
+            let discovery = SkillDiscovery::new();
+            let source = std::path::PathBuf::from(&path);
+            let target = discovery.get_linked_skills_dir();
+
+            match discovery.link_skill(&source, &target) {
+                Ok(linked) => {
+                    println!("✓ Successfully linked skill!");
+                    println!("  Source: {}", path);
+                    println!("  Target: {}", linked.display());
+                }
+                Err(e) => {
+                    println!("✗ Error: {}", e);
+                }
+            }
+        }
+
+        SkillCommands::Unlink { name } => {
+            use zeroinsect::skill_executor::SkillDiscovery;
+
+            let discovery = SkillDiscovery::new();
+            let skills_dir = discovery.get_linked_skills_dir();
+
+            match discovery.unlink_skill(&name, &skills_dir) {
+                Ok(_) => {
+                    println!("✓ Successfully unlinked skill: {}", name);
+                }
+                Err(e) => {
+                    println!("✗ Error: {}", e);
+                }
+            }
         }
     }
 }
