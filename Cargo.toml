@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "ROS2 execution layer with ZeroClaw integration"
 
+[features]
+default = []
+ros2 = ["dep:r2r"]
+
 [dependencies]
-r2r = "2.0"
+r2r = { version = "0.9", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"] }
