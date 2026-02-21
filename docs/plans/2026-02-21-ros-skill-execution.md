@@ -1,8 +1,8 @@
 # ROS 能力高级执行系统设计方案
 
-> **目标**：通过 ZeroClaw 调用 Skill，实现对 ROS 能力的高级认知执行。结合 LLM 理解自然语言指令，通过 Skill 封装 ROS 能力，实现有理解的机器人操作。
+> **目标**：通过 ZeroClaw 调用 Skill，实现对 ROS 能力的高级执行。将 ROS 能力封装为 ZeroClaw Skill 格式，供 ZeroClaw 的 LLM 调用。
 
-> **版本**：v1.0 - 初始版本
+> **版本**：v1.1 - 移除内置 LLM，依赖 ZeroClaw
 
 ---
 
@@ -13,14 +13,58 @@
 | 需求 | 描述 | 优先级 |
 |------|------|--------|
 | **Skill 封装** | 将 ROS 能力封装为 ZeroClaw Skill 格式 | P0 |
-| **LLM 认知理解** | 通过 LLM 理解自然语言指令意图 | P0 |
 | **能力 → Skill 映射** | 自动将 capability map 转换为 Skill | P0 |
-| **执行反馈** | 执行结果通过 LLM 生成自然语言反馈 | P1 |
-| **多轮对话** | 支持多轮交互式任务执行 | P1 |
+| **Skill 执行** | 通过 Skill Executor 执行 ROS 能力 | P0 |
+| **ZeroClaw 集成** | 注册到 ZeroClaw Tool/Skill System | P1 |
 
 ### 1.2 系统架构
 
 ```
+┌─────────────────────────────────────────────────────────────┐
+│                    ZeroClaw 平台                              │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              LLM Agent Engine                        │  │
+│  │   - 意图理解 (Intent Recognition)                    │  │
+│  │   - 参数提取 (Parameter Extraction)                 │  │
+│  │   - 任务分解 (Task Decomposition)                  │  │
+│  │   - 结果解释 (Result Interpretation)                │  │
+│  └────────────────────────┬────────────────────────────┘  │
+│                           │                                │
+│  ┌────────────────────────▼────────────────────────────┐    │
+│  │              Skill System                           │    │
+│  │   - Skill Registry (ZeroInsect 提供)              │    │
+│  │   - Skill Executor (ZeroInsect 提供)              │    │
+│  │   - Skill Chaining                                │    │
+│  └────────────────────────────────────────────────────┘    │
+└───────────────────────────┼─────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   ZeroInsect 执行层                          │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │              Capability Map                           │  │
+│  │   - 能力发现 (Discovery)                           │  │
+│  │   - 能力分类 (Classification)                       │  │
+│  │   - 因果推理 (Causal Inference)                     │  │
+│  │   - 动作规划 (Action Planning)                      │  │
+│  └─────────────────────────────────────────────────────┘  │
+│                           │                                │
+│  ┌────────────────────────▼────────────────────────────┐  │
+│  │              ROS2 Bridge                           │  │
+│  │   - Topic Publisher/Subscriber                    │  │
+│  │   - Service Client                                 │  │
+│  │   - Action Client                                  │  │
+│  └────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 1.3 设计原则
+
+- **不内置 LLM**：所有 LLM 功能由 ZeroClaw 提供
+- **Skill 驱动**：ZeroInsect 作为 Skill Provider
+- **零耦合**：ZeroInsect 只负责 ROS 执行，不处理认知
 ┌─────────────────────────────────────────────────────────────┐
 │                    ZeroClaw 认知层                           │
 ├─────────────────────────────────────────────────────────────┤
@@ -366,22 +410,23 @@ pub struct Interaction {
 - [ ] 并行执行独立 Skill
 - [ ] 上一步输出作为下一步输入
 
-### Iteration 4: LLM 集成
+### Iteration 4: ZeroClaw 集成 (替代 LLM 迭代)
 
-**目标**：集成 LLM 实现意图理解和结果解释
+**目标**：将 Skill 注册到 ZeroClaw Tool/Skill System
+
+> 注意：LLM 功能由 ZeroClaw 提供，ZeroInsect 只提供 ROS 执行能力
 
 | 任务 | 文件 | 描述 |
 |------|------|------|
-| T4.1 | `src/skill_executor/llm.rs` | 定义 LlmClient trait |
-| T4.2 | `src/skill_executor/llm.rs` | 实现 OpenAI/Anthropic 客户端 |
-| T4.3 | `src/skill_executor/prompt.rs` | 定义意图理解 Prompt |
-| T4.4 | `src/skill_executor/prompt.rs` | 定义结果解释 Prompt |
-| T4.5 | `src/skill_executor/llm.rs` | 实现自然语言 → Skill 调用转换 |
+| T4.1 | `src/skill_executor/exporter.rs` | 导出 Skill 为 ZeroClaw 格式 |
+| T4.2 | `src/skill_executor/exporter.rs` | 生成 SKILL.toml 文件 |
+| T4.3 | `src/main.rs` | 添加 `skill export` 命令 |
+| T4.4 | `src/main.rs` | 生成 ZeroClaw 工具定义 |
 
 **验收标准**：
-- [ ] 可以调用 OpenAI API
-- [ ] 可以解析 LLM 返回的 Skill 调用
-- [ ] 可以将执行结果解释为自然语言
+- [ ] 可导出 Skill 到 ZeroClaw 兼容格式
+- [ ] 自动生成 SKILL.toml
+- [ ] 注册到 ZeroClaw Tool System
 
 ### Iteration 5: CLI 集成
 
@@ -392,13 +437,13 @@ pub struct Interaction {
 | T5.1 | `src/main.rs` | 添加 `skill` 子命令 |
 | T5.2 | `src/main.rs` | 实现 `skill list` |
 | T5.3 | `src/main.rs` | 实现 `skill call` |
-| T5.4 | `src/main.rs` | 实现 `skill execute` (自然语言) |
+| T5.4 | `src/main.rs` | 实现 `skill execute` (通过 ZeroClaw) |
 | T5.5 | `src/main.rs` | 实现 `skill chain` |
 
 **验收标准**：
 - [ ] `skill list` 显示所有可用 Skill
 - [ ] `skill call --name xxx --param k=v` 调用 Skill
-- [ ] `skill execute "让机器人移动到门口"` 自然语言执行
+- [ ] `skill execute` 委托给 ZeroClaw 执行
 
 ---
 
@@ -437,22 +482,22 @@ pub struct Interaction {
 │     │  - target_pose: ✓ (from context)    │                │
 │     │  - object_color: ✓ (from vision)   │                │
 │     └──────────────┬──────────────────────┘                │
-│                    │                                        │
-│                    ▼                                        │
+                    │                                        │
+                    ▼                                        │
 │  4. Skill Chain 执行                                        │
 │     ┌─────────────────────────────────────┐                │
 │     │  顺序执行:                          │                │
-│     │  1. navigate(target=kitchen)       │                │
+│     │  1. navigate(target=kitchen)      │                │
 │     │     ↓ 成功                          │                │
-│     │  2. detect_object(color=red)       │                │
+│     │  2. detect_object(color=red)      │                │
 │     │     ↓ 成功                          │                │
 │     │  3. grasp(object=box_123)          │                │
 │     └──────────────┬──────────────────────┘                │
-│                    │                                        │
-│                    ▼                                        │
-│  5. 结果解释 (LLM)                                          │
+                    │                                        │
+                    ▼                                        │
+│  5. 结果返回 ZeroClaw (LLM 解释)                          │
 │     ┌─────────────────────────────────────┐                │
-│     │  将执行结果转换为自然语言             │                │
+│     │  ZeroClaw LLM 将结果转换为自然语言   │                │
 │     │  "机器人已成功移动到厨房位置，        │                │
 │     │   检测到红色盒子位于(1.2, 0.5)处，  │                │
 │     │   并已完成抓取操作。"                │                │
