@@ -6,3 +6,4 @@ pub mod tools;
 pub mod safety;
 pub mod swarm;
 pub mod bridge;
+pub mod capability_map;
