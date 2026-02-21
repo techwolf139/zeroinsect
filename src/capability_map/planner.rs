@@ -314,7 +314,9 @@ impl ActionPlanner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability_map::graph::{CapabilityCategory, RosCapabilityType};
+    use crate::capability_map::graph::{
+        CapabilityCategory, CausalEdge, CausalRelation, RosCapabilityType,
+    };
 
     fn create_test_map() -> CapabilityMap {
         let mut map = CapabilityMap::new();
