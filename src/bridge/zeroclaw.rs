@@ -30,7 +30,7 @@ impl ZeroClawBridge {
         &self.socket_path
     }
 
-    pub async fn call_tool(&self, request: ToolRequest) -> ToolResponse {
+    pub async fn call_tool(&self, _request: ToolRequest) -> ToolResponse {
         ToolResponse {
             success: true,
             result: serde_json::json!({"status": "executed"}),

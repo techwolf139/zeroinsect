@@ -32,8 +32,8 @@ pub fn parse_launch_content(path: &str, content: &str) -> Result<LaunchFile> {
     reader.config_mut().trim_text(true);
 
     let mut nodes = Vec::new();
-    let mut parameters = HashMap::new();
-    let mut arguments = Vec::new();
+    let parameters = HashMap::new();
+    let arguments = Vec::new();
 
     let mut buf = Vec::new();
     loop {

@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

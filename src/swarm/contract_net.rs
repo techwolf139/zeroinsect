@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use crate::swarm::state::NodeStatus;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
