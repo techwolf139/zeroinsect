@@ -1,4 +1,4 @@
-use crate::capability_map::graph::{CapabilityMap, CapabilityNode, CausalEdge, CausalRelation};
+use crate::capability_map::graph::{CapabilityMap, CapabilityNode};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 

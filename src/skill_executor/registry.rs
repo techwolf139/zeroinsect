@@ -266,10 +266,10 @@ impl SkillRegistry {
 
     pub fn remove(&mut self, name: &str) -> Option<RosSkill> {
         if let Some(skill) = self.skills.remove(name) {
-            for (category, names) in &mut self.category_index {
+            for (_category, names) in &mut self.category_index {
                 names.retain(|n| n != name);
             }
-            for (tag, names) in &mut self.tag_index {
+            for (_tag, names) in &mut self.tag_index {
                 names.retain(|n| n != name);
             }
             Some(skill)

@@ -145,7 +145,7 @@ fn handle_capability_command(cmd: CapabilityCommands) {
         CapabilityCommands::Map {
             category,
             node,
-            format,
+            format: _,
         } => {
             println!("Building capability map...");
 
@@ -220,7 +220,7 @@ fn handle_capability_command(cmd: CapabilityCommands) {
             }
         }
 
-        CapabilityCommands::Plan { goal, from } => {
+        CapabilityCommands::Plan { goal, from: _ } => {
             println!("Planning action sequence for: {}", goal);
 
             let mut introspector = RosRuntimeIntrospector::new();
@@ -357,7 +357,7 @@ fn handle_capability_command(cmd: CapabilityCommands) {
 fn handle_skill_command(cmd: SkillCommands) {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use zeroinsect::capability_map::{CapabilityClassifier, CapabilityMap};
+    use zeroinsect::capability_map::CapabilityClassifier;
     use zeroinsect::introspect::runtime::RosRuntimeIntrospector;
     use zeroinsect::skill_executor::{SkillCategory, SkillExecutor, SkillLoader, SkillRegistry};
 

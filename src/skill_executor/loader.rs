@@ -1,9 +1,9 @@
 use crate::capability_map::graph::{
-    CapabilityCategory, CapabilityMap, CapabilityNode, RosCapabilityType,
+    CapabilityCategory, CapabilityMap,
 };
 use crate::skill_executor::registry::{
     CapabilityRef, CapabilityRefType, Condition, Effect, ParameterDef, ReturnDef, RosSkill,
-    SkillCategory, SkillMetadata,
+    SkillCategory,
 };
 use anyhow::Result;
 use serde::Deserialize;
