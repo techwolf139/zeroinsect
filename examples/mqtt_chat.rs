@@ -163,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(e) => {
                         eprintln!("Connection error: {}", e);
-                        sleep(Duration::from_secs(1)).await;
+                        break;
                     }
                     _ => {}
                 }
