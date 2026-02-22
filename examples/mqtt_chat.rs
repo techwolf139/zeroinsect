@@ -1,25 +1,8 @@
-//! Simple MQTT Chat Client Example
-//!
-//! This example demonstrates a simple chat client using MQTT protocol.
-//! It connects to the MQTT broker, allows sending and receiving messages.
-//!
-//! Run this example after starting the MQTT broker:
-//! ```bash
-//! cargo run -- mqtt
-//! ```
-//!
-//! Then run this client in multiple terminals:
-//! ```bash
-//! cargo run --example mqtt_chat
-//! ```
-
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use std::env;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 
-/// Chat message structure
 #[derive(Debug, Clone)]
 struct ChatMessage {
     from: String,
@@ -57,7 +40,6 @@ impl ChatMessage {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get username from command line or use default
     let username = env::args()
         .nth(1)
         .unwrap_or_else(|| "Anonymous".to_string());
@@ -71,7 +53,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Broker: {}:1883", broker_addr);
     println!();
 
-    // Configure MQTT client
     let mut mqttoptions = MqttOptions::new(
         format!("chat_client_{}", username),
         broker_addr,
@@ -80,13 +61,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     mqttoptions.set_keep_alive(Duration::from_secs(30));
     mqttoptions.set_credentials(&username, "password");
 
-    // Create async client
     let (client, mut eventloop) = AsyncClient::new(mqttoptions, 100);
 
-    // Subscribe to personal inbox and broadcast channel
     let personal_topic = format!("chat/u/{}", username);
     let broadcast_topic = "chat/broadcast";
-    
+
+    loop {
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                println!("✓ Connected to MQTT broker");
+                break;
+            }
+            Ok(Event::Incoming(Packet::Disconnect)) => {
+                println!("✗ Connection rejected");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Connection error: {}", e);
+                return Err(e.into());
+            }
+            _ => {}
+        }
+    }
+
     client.subscribe(&personal_topic, QoS::AtMostOnce).await?;
     client.subscribe(broadcast_topic, QoS::AtMostOnce).await?;
 
@@ -98,15 +95,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  send <user> <message>  - Send private message");
     println!("  broadcast <message>     - Send broadcast message");
     println!("  whoami                  - Show your username");
-    println!("  quit                   - Exit chat");
+    println!("  quit                    - Exit chat");
     println!();
     println!("=== Start chatting! ===");
     println!();
 
-    // Create channel for user input
     let (tx, mut rx) = mpsc::channel::<String>(100);
 
-    // Spawn task to handle user input
     let tx_clone = tx.clone();
     let username_clone = username.clone();
     tokio::spawn(async move {
@@ -132,10 +127,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Main event loop
     loop {
         tokio::select! {
-            // Handle incoming MQTT messages
             event = eventloop.poll() => {
                 match event {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
@@ -143,7 +136,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let payload = String::from_utf8_lossy(&publish.payload);
                         
                         if let Some(msg) = ChatMessage::from_json(&payload) {
-                            // Don't show own messages
                             if msg.from != username {
                                 println!("\r[{}] {}: {}", 
                                     if topic.contains("broadcast") { "BROADCAST" } else { "PRIVATE" },
@@ -154,22 +146,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                     }
-                    Ok(Event::Incoming(Packet::ConnAck(_))) => {
-                        println!("✓ Connected to MQTT broker");
-                    }
+                    Ok(Event::Incoming(Packet::SubAck(_))) => {}
                     Ok(Event::Incoming(Packet::Disconnect)) => {
-                        println!("✗ Disconnected from broker");
+                        println!("\n✗ Disconnected from broker");
                         break;
                     }
                     Err(e) => {
-                        eprintln!("Connection error: {}", e);
+                        eprintln!("\nConnection error: {}", e);
                         break;
                     }
                     _ => {}
                 }
             }
             
-            // Handle user input
             Some(input) = rx.recv() => {
                 let parts: Vec<&str> = input.splitn(3, ' ').collect();
                 
