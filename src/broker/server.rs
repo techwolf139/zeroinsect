@@ -108,7 +108,6 @@ impl BrokerServer {
                                     
                                     let connack = PacketParser::encode_connack(false, 0);
                                     let encoded = PacketParser::new().encode(&connack)?;
-                                    eprintln!("[DEBUG] Sending CONNACK: {:?}", &encoded[..encoded.len().min(20)]);
                                     stream.write_all(&encoded).await?;
                                     stream.flush().await?;
                                     
