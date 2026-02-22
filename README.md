@@ -33,6 +33,57 @@ ZeroInsect is a ROS (Robot Operating System) system capability discovery and act
 - **Skill Linking**: Link external skills via symlinks
 - **ROS Integration**: Generate skills from ROS capabilities
 
+### 🤖 IoT Device Integration
+- **ESP32/Arduino MQTT Bridge**: Connect microcontrollers to ROS systems via MQTT
+- **Sensor Data Collection**: Stream IMU, temperature, and other sensor data to ROS
+- **Natural Language Control**: Use LLM to parse commands from IoT devices
+- **Cross-ROS Communication**: Bridge ROS1 ↔ ROS2 via MQTT
+
+---
+
+## IoT Device Communication Architecture
+
+```
+┌──────────────┐     MQTT      ┌──────────────┐     DDS      ┌──────────────┐
+│   ESP32      │◄────────────►│ Bridge Hub  │◄────────────►│   ROS2      │
+│  + IMU      │   /imu data  │  + LLM      │  /imu_raw   │   Robot     │
+└──────────────┘               └──────────────┘              └──────────────┘
+        │                            │                            │
+        │     MQTT                 │                            │
+        ▼                            ▼                            ▼
+┌──────────────┐               ┌──────────────┐              ┌──────────────┐
+│   Arduino    │               │   ROS1      │              │   ROS1      │
+│  + Sensors  │               │   Noetic   │◄────────────►│   Noetic   │
+└──────────────┘               └──────────────┘              └──────────────┘
+```
+
+### Data Flow Example
+
+```
+ESP32 (IMU) ──publish──> MQTT ──forward──> ROS2 (/imu_raw)
+                                        │
+                                        └──> LLM Intent Parsing
+                                            └──> Execute Action
+```
+
+### MQTT Topics
+
+| Topic | Purpose |
+|-------|---------|
+| `bridge/command/{device_id}` | Send commands to devices |
+| `bridge/status/{device_id}` | Device status updates |
+| `bridge/topics/{type}` | Sensor data (imu, temperature, etc.) |
+| `bridge/capabilities/{device_id}` | Device capability manifest |
+| `bridge/response/{request_id}` | Command execution results |
+
+### Examples
+
+```bash
+# Arduino MQTT example - examples/arduino_mqtt/
+# ESP32 IMU example - examples/esp32_imu_mqtt/
+```
+
+
 ---
 
 ## Use Cases
