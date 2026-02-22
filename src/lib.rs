@@ -8,3 +8,14 @@ pub mod swarm;
 pub mod bridge;
 pub mod capability_map;
 pub mod skill_executor;
+
+pub mod storage;
+pub mod broker;
+pub mod network;
+pub mod session;
+pub mod router;
+pub mod types;
+
+pub use types::message::ChatMessage;
+pub use types::user::UserProfile;
+pub use types::group::GroupInfo;
