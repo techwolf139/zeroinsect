@@ -19,3 +19,11 @@ pub enum MessageType {
     File,
     System,
 }
+#[derive(Debug, Clone)]
+pub struct PublishPacket {
+    pub topic: String,
+    pub payload: Vec<u8>,
+    pub qos: u8,
+    pub retain: bool,
+    pub packet_id: Option<u16>,
+}
