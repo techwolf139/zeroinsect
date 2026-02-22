@@ -37,6 +37,10 @@ enum Commands {
         #[command(subcommand)]
         subcommand: SkillCommands,
     },
+    Mqtt {
+        #[arg(long, default_value = "127.0.0.1:1883")]
+        addr: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -146,6 +150,9 @@ fn main() {
         }
         Commands::Skill { subcommand } => {
             handle_skill_command(subcommand);
+        }
+        Commands::Mqtt { addr } => {
+            run_mqtt_server(&addr);
         }
     }
 }
@@ -742,4 +749,31 @@ fn print_discovered_skills(
             println!("  ✦ {}{}{}", skill.name, has_toml, has_md);
         }
     }
+}
+
+fn run_mqtt_server(addr: &str) {
+    use zeroinsect::broker::server::BrokerServer;
+    use zeroinsect::storage::kv_store::KvStore;
+    use tokio;
+
+    println!("Starting MQTT Broker...");
+    println!("Address: {}", addr);
+    
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    
+    rt.block_on(async {
+        let store = match KvStore::new() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to initialize storage: {}", e);
+                return;
+            }
+        };
+        
+        let server = BrokerServer::new(store);
+        
+        if let Err(e) = server.start(addr).await {
+            eprintln!("Server error: {}", e);
+        }
+    });
 }
