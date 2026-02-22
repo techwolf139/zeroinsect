@@ -15,6 +15,8 @@ pub mod network;
 pub mod session;
 pub mod router;
 pub mod types;
+pub mod llm;
+pub mod adapters;
 
 pub use types::message::ChatMessage;
 pub use types::user::UserProfile;
