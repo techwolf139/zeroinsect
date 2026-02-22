@@ -3,3 +3,4 @@ target/
 .DS_Store
 docs/.DS_Store
 .worktrees/
+rmc_storage/
