@@ -64,11 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let broker_addr = env::args()
         .nth(2)
-        .unwrap_or_else(|| "127.0.0.1:1883".to_string());
+        .unwrap_or_else(|| "127.0.0.1".to_string());
 
     println!("=== MQTT Chat Client ===");
     println!("Username: {}", username);
-    println!("Broker: {}", broker_addr);
+    println!("Broker: {}:1883", broker_addr);
     println!();
 
     // Configure MQTT client

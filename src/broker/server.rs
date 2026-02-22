@@ -83,12 +83,22 @@ impl BrokerServer {
                         Packet::Connect(connect) => {
                             client_id = Some(connect.client_id.to_string());
                             
-                            let auth_result = if let (Some(username), Some(password)) = 
-                                (connect.username, connect.password) {
-                                let password_str = std::str::from_utf8(password).unwrap_or("password");
-                                auth.authenticate(username, password_str).await
-                            } else {
-                                auth.authenticate("anonymous", "password").await
+                            let username = connect.username.as_deref().unwrap_or("anonymous");
+                            let password = connect.password.map(|p| std::str::from_utf8(p).unwrap_or("password")).unwrap_or("password");
+                            
+                            // Auto-register user if not exists (for demo purposes)
+                            let auth_result = match auth.authenticate(username, password).await {
+                                crate::broker::auth::AuthResult::Success(user_id) => {
+                                    crate::broker::auth::AuthResult::Success(user_id)
+                                }
+                                crate::broker::auth::AuthResult::UserNotFound => {
+                                    // Auto-register new user
+                                    match auth.register_user(username, password).await {
+                                        Ok(user_id) => crate::broker::auth::AuthResult::Success(user_id),
+                                        Err(_) => crate::broker::auth::AuthResult::InvalidCredentials,
+                                    }
+                                }
+                                other => other,
                             };
                             
                             match auth_result {
