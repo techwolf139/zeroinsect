@@ -27,7 +27,7 @@ Rust 语言的内存安全（Memory Safety）、无垃圾回收（No GC）以及
 [ MQTT Broker 集群 (Rust Core) ] <---> [ 认证与业务服务 (Rust API) ]
       |               |
       v               v
-[ Redis Cluster ]  [ Postgres/MySQL ]  [ InfluxDB/ClickHouse ]
+  [ 内建存储 ]
 (会话/订阅树/缓存)    (用户数据/群组)      (消息历史/日志)
 ```
 
@@ -39,9 +39,7 @@ Rust 语言的内存安全（Memory Safety）、无垃圾回收（No GC）以及
 2.  **业务服务 (API Server)**:
     *   处理用户注册、登录（颁发 Token）、加好友、建群等 HTTP/gRPC 请求。
 3.  **存储层**:
-    *   **Redis**: 存储 MQTT Session（会话状态）、在线状态、飞行窗口（In-flight messages）。
-    *   **Database**: 存储用户资料、关系链。
-    *   **Time-Series/Log DB**: 存储历史聊天记录（写多读少）。
+    *   **内建存储**: 存储 MQTT Session（会话状态）、在线状态、飞行窗口（In-flight messages）。存储用户资料、关系链。存储历史聊天记录（写多读少）。
 
 ## 3. Rust MQTT Broker 核心设计
 
@@ -152,4 +150,201 @@ async fn handle_connection(socket: TcpStream, state: Arc<BrokerState>) {
 4.  **连接保活**:
     *   使用高效的时间轮 (Timer Wheel) 算法管理 MQTT KeepAlive 心跳，比单纯的 `sleep` 更加节省资源。
 
+
+持久化采用 **嵌入式 Key-Value (KV) 存储引擎**。
+
+这种方案将数据以文件的形式直接存储在磁盘上，**无需安装任何外部数据库软件**（，数据库引擎直接编译进 Rust 二进制文件中。
+
+# 方案：Rust 嵌入式 KV 存储 (NoSQL)
+
+## 1. 技术选型
+
+我们采用 **LSM-Tree** 或 **B-Tree** 结构的嵌入式存储引擎。
+
+*   **推荐引擎**: **RocksDB** (通过 `rust-rocksdb`) 或 **Redb** / **Sled** (纯 Rust 实现)。
+    *   **RocksDB**: Facebook 开发，工业级标准，读写性能极强（适合高吞吐聊天）。
+    *   **Redb**: 纯 Rust 实现，ACID 事务支持，零拷贝，安全性极高（适合 Rust 项目）。
+*   **序列化**: `Serde` + `Bincode` (二进制) 或 `Serde JSON`。
+
+**本方案以 `RocksDB` 为例**，因为它在处理海量写入（聊天消息日志）时性能最好。
+
+## 2. 架构图 (极简版)
+
+```text
+[ 客户端 ]
+    |
+    v
+[ MQTT Broker (Rust Binary) ]
+    |
+    +-- [ 内存: DashMap (Session/PubSub) ]
+    |
+    +-- [ 存储引擎: RocksDB / Redb ] <--- (编译在 APP 内部)
+            |
+            +-- ./data/users.db   (用户数据)
+            +-- ./data/messages.db (离线消息 & 历史)
+```
+
+## 3. Key-Value 数据模型设计
+
+由于没有 SQL 的表结构，我们需要通过 **Key 的前缀设计 (Key Design)** 来模拟表和索引。
+
+### 3.1 用户存储 (Users)
+存储用户的基础信息。
+
+*   **Key 格式**: `user:{user_id}`
+*   **Value**: JSON/Bincode 序列化后的 User 结构体。
+
+```json
+// Value 示例
+{
+  "username": "alice",
+  "password_hash": "argon2$...",
+  "created_at": 1678888888
+}
+```
+
+### 3.2 群组存储 (Groups)
+存储群组成员列表。
+
+*   **Key 格式**: `group:{group_id}`
+*   **Value**: 包含成员 ID 列表的 JSON。
+
+```json
+// Value 示例
+{
+  "owner": "user_id_A",
+  "members": ["user_id_A", "user_id_B", "user_id_C"]
+}
+```
+
+### 3.3 离线消息队列 (Offline Inbox)
+这是最关键的设计。利用 KV 存储的 **扫描 (Scan / Iterator)** 功能。
+
+*   **Key 格式**: `inbox:{target_user_id}:{timestamp_ns}:{msg_id}`
+    *   *说明*: 将 `target_user_id` 放在最前面，可以让同一个用户的离线消息在磁盘上物理相邻。
+*   **Value**: 消息体的二进制数据 (Payload)。
+
+**操作逻辑**:
+1.  **存储**: 直接 `put(key, value)`。
+2.  **读取**: 使用 `prefix_iterator("inbox:{user_id}:")` 获取该用户所有未读消息。
+3.  **删除**: 确认接收后，`delete(key)`。
+
+### 3.4 历史记录 (Timeline / History)
+用于漫游消息。
+
+*   **Key 格式**: `timeline:{chat_id}:{timestamp_ns}`
+    *   *chat_id*: 可以是 `group_id` 或 `p2p_session_id`。
+*   **Value**: 完整消息结构体。
+
+## 4. Rust 代码实现 (核心逻辑)
+
+### 4.1 引入依赖
+```toml
+[dependencies]
+rocksdb = "0.21"  # 或者使用 redb = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+```
+
+### 4.2 存储引擎封装 (Repository Pattern)
+
+我们将 RocksDB 封装为一个 `Store` 结构体，对外提供业务接口。
+
+```rust
+use rocksdb::{DB, Options, IteratorMode};
+use serde::{Serialize, Deserialize};
+use std::sync::Arc;
+
+// 定义存储路径
+const DB_PATH: &str = "./rmc_storage";
+
+#[derive(Clone)]
+pub struct KvStore {
+    db: Arc<DB>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserProfile {
+    pub username: String,
+    pub password_hash: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ChatMessage {
+    pub id: String,
+    pub from: String,
+    pub content: String,
+    pub timestamp: i64,
+}
+
+impl KvStore {
+    // 初始化数据库
+    pub fn new() -> Self {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        // 优化写入性能
+        opts.set_keep_log_file_num(10); 
+        
+        let db = DB::open(&opts, DB_PATH).expect("Failed to open RocksDB");
+        Self { db: Arc::new(db) }
+    }
+
+    // --- 用户相关 ---
+    
+    pub fn save_user(&self, user_id: &str, profile: &UserProfile) -> anyhow::Result<()> {
+        let key = format!("user:{}", user_id);
+        let val = serde_json::to_vec(profile)?; // 序列化为字节
+        self.db.put(key, val)?;
+        Ok(())
+    }
+
+    pub fn get_user(&self, user_id: &str) -> anyhow::Result<Option<UserProfile>> {
+        let key = format!("user:{}", user_id);
+        match self.db.get(key)? {
+            Some(val) => {
+                let profile: UserProfile = serde_json::from_slice(&val)?;
+                Ok(Some(profile))
+            }
+            None => Ok(None),
+        }
+    }
+
+    // --- 离线消息相关 (核心) ---
+
+    // 存入离线箱
+    pub fn save_offline_msg(&self, target_id: &str, msg: &ChatMessage) -> anyhow::Result<()> {
+        // Key 设计：inbox:{user_id}:{timestamp}
+        let key = format!("inbox:{}:{}", target_id, msg.timestamp);
+        let val = serde_json::to_vec(msg)?;
+        self.db.put(key, val)?;
+        Ok(())
+    }
+
+    // 拉取并清空离线消息
+    pub fn pop_offline_msgs(&self, target_id: &str) -> anyhow::Result<Vec<ChatMessage>> {
+        let prefix = format!("inbox:{}:", target_id);
+        let mut messages = Vec::new();
+        
+        // 扫描所有以 prefix 开头的 Key
+        let iter = self.db.prefix_iterator(prefix.as_bytes());
+        
+        for item in iter {
+            let (key, val) = item?;
+            // 再次校验前缀（RocksDB iterator 有时会滑过界）
+            if !String::from_utf8_lossy(&key).starts_with(&prefix) {
+                break;
+            }
+            
+            let msg: ChatMessage = serde_json::from_slice(&val)?;
+            messages.push(msg);
+            
+            // 读完即删（或者等待 ACK 后再删，视 QoS 需求而定）
+            self.db.delete(key)?; 
+        }
+        
+        Ok(messages)
+    }
+}
+```
 
