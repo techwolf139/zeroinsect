@@ -2,6 +2,7 @@ use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use std::env;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 #[derive(Debug, Clone)]
 struct ChatMessage {
@@ -87,6 +88,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.subscribe(&personal_topic, QoS::AtMostOnce).await?;
     client.subscribe(broadcast_topic, QoS::AtMostOnce).await?;
 
+    // Wait for subscriptions to be acknowledged (we have 2 subscriptions)
+    let mut suback_count = 0;
+    loop {
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Packet::SubAck(_))) => {
+                suback_count += 1;
+                if suback_count >= 2 {
+                    println!("✓ Subscriptions confirmed");
+                    break;
+                }
+            }
+            Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                // Ignore stray CONNACK
+            }
+            Ok(Event::Incoming(Packet::Disconnect)) => {
+                println!("✗ Disconnected while waiting for suback");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("Error waiting for suback: {}", e);
+                return Err(e.into());
+            }
+            _ => {}
+        }
+    }
+
     println!("✓ Subscribed to:");
     println!("  - {} (personal inbox)", personal_topic);
     println!("  - {} (broadcast)", broadcast_topic);
@@ -129,8 +156,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         tokio::select! {
-            event = eventloop.poll() => {
-                match event {
+            _ = sleep(Duration::from_millis(50)) => {
+                match eventloop.poll().await {
                     Ok(Event::Incoming(Packet::Publish(publish))) => {
                         let topic = publish.topic.clone();
                         let payload = String::from_utf8_lossy(&publish.payload);
@@ -148,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Ok(Event::Incoming(Packet::SubAck(_))) => {}
                     Ok(Event::Incoming(Packet::Disconnect)) => {
-                        println!("\n✗ Disconnected from broker");
+                                println!("\n✗ Disconnected from broker");
                         break;
                     }
                     Err(e) => {
@@ -174,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let chat_msg = ChatMessage::new(&username, message);
                         let topic = format!("chat/u/{}", target);
                         
-                        client.publish(&topic, QoS::AtMostOnce, false, chat_msg.to_json()).await?;
+                        client.publish(&topic, QoS::AtMostOnce, false, chat_msg.to_json()).await.unwrap();
                         println!("✓ Sent to {}: {}", target, message);
                     }
                     "broadcast" => {
@@ -185,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let message = parts[1];
                         
                         let chat_msg = ChatMessage::new(&username, message);
-                        client.publish("chat/broadcast", QoS::AtMostOnce, false, chat_msg.to_json()).await?;
+                        client.publish("chat/broadcast", QoS::AtMostOnce, false, chat_msg.to_json()).await.unwrap();
                         println!("✓ Broadcast sent: {}", message);
                     }
                     "whoami" => {

@@ -107,7 +107,10 @@ impl BrokerServer {
                                     let _ = store.update_user_status(&user_id, UserStatus::Online);
                                     
                                     let connack = PacketParser::encode_connack(false, 0);
-                                    stream.write_all(&PacketParser::new().encode(&connack)?).await?;
+                                    let encoded = PacketParser::new().encode(&connack)?;
+                                    eprintln!("[DEBUG] Sending CONNACK: {:?}", &encoded[..encoded.len().min(20)]);
+                                    stream.write_all(&encoded).await?;
+                                    stream.flush().await?;
                                     
                                     println!("Client {} connected as user {}", addr, user_id);
                                 }
