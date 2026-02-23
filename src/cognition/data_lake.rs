@@ -26,14 +26,15 @@ mod ttlshim {
         }
     }
 }
-#[cfg(not(feature = "ttl"))]
-use rocksdb::{ColumnFamily, Options, DB};
+// Unconditional imports for core RocksDB types; TTL path is feature-gated below
+use rocksdb::{ColumnFamily, Options, WriteBatch, DB};
 #[cfg(feature = "ttl")]
 use ttlshim::DBWithTTL;
 #[cfg(feature = "ttl")]
 type RocksDBHandle = DBWithTTL;
 #[cfg(not(feature = "ttl"))]
 type RocksDBHandle = DB;
+use rocksdb::{BlockBasedOptions, Cache};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -112,10 +113,23 @@ impl DataLake {
             CF_KNOWLEDGE_GRAPH,
             CF_ANALYTICS,
         ];
+        // Configure RocksDB block cache for improved performance
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&Cache::new_lru_cache(128 * 1024 * 1024));
+        opts.set_block_based_table_factory(&block_opts);
+        // Configure RocksDB block cache for improved performance
+        let mut block_opts = BlockBasedOptions::default();
+        block_opts.set_block_cache(&Cache::new_lru_cache(128 * 1024 * 1024));
+        opts.set_block_based_table_factory(&block_opts);
         let db = {
             #[cfg(feature = "ttl")]
             {
-                ttlshim::DBWithTTL::open_cf_with_ttl(&opts, DB_PATH, cfs.clone(), TTL_SECONDS)?
+                ttlshim::DBWithTTL::open_cf_with_ttl(
+                    &opts,
+                    Path::new(DB_PATH),
+                    cfs.clone(),
+                    TTL_SECONDS,
+                )?
             }
             #[cfg(not(feature = "ttl"))]
             {
@@ -434,6 +448,28 @@ impl DataLake {
     pub fn delete_sensor_data(&self, device_id: &str, timestamp: u64) -> Result<()> {
         let key = format!("sensor_{}_{}", device_id, timestamp);
         self.db.delete_cf(self.cf_sensor_data(), key)?;
+        Ok(())
+    }
+
+    pub fn store_device_states_batch(&self, states: &[DeviceState]) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for state in states {
+            let key = KeyBuilder::build(&state.device_id, "state", state.timestamp);
+            let value = serde_json::to_vec(state)?;
+            batch.put_cf(self.cf_device_state(), key, value);
+        }
+        self.db.write(batch)?;
+        Ok(())
+    }
+
+    pub fn store_sensor_data_batch(&self, data_list: &[SensorData]) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for data in data_list {
+            let key = KeyBuilder::build(&data.device_id, &data.sensor_type, data.timestamp);
+            let value = serde_json::to_vec(data)?;
+            batch.put_cf(self.cf_sensor_data(), key, value);
+        }
+        self.db.write(batch)?;
         Ok(())
     }
 }
