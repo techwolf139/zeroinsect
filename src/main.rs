@@ -41,8 +41,19 @@ enum Commands {
         #[arg(long, default_value = "127.0.0.1:1883")]
         addr: String,
     },
+    DataLake {
+        #[command(subcommand)]
+        subcommand: DataLakeCommands,
+    },
 }
 
+#[derive(Subcommand)]
+enum DataLakeCommands {
+    Start {
+        #[arg(long, default_value = "8080")]
+        port: u16,
+    },
+}
 #[derive(Subcommand)]
 enum CapabilityCommands {
     Map {
@@ -153,6 +164,9 @@ fn main() {
         }
         Commands::Mqtt { addr } => {
             run_mqtt_server(&addr);
+        }
+        Commands::DataLake { subcommand } => {
+            handle_datalake_command(subcommand);
         }
     }
 }
@@ -776,4 +790,32 @@ fn run_mqtt_server(addr: &str) {
             eprintln!("Server error: {}", e);
         }
     });
+}
+
+
+
+fn handle_datalake_command(cmd: DataLakeCommands) {
+    use zeroinsect::cognition::{api::create_server, DataLake};
+    use tokio;
+
+    match cmd {
+        DataLakeCommands::Start { port } => {
+            println!("Starting Data Lake API server...");
+            println!("Port: {}", port);
+
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+
+            rt.block_on(async {
+                let data_lake = match DataLake::new() {
+                    Ok(dl) => dl,
+                    Err(e) => {
+                        eprintln!("Failed to initialize DataLake: {}", e);
+                        return;
+                    }
+                };
+
+                create_server(data_lake, port).await;
+            });
+        }
+    }
 }

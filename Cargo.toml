@@ -7,6 +7,7 @@ description = "ROS2 execution layer with ZeroClaw integration"
 [features]
 default = []
 ros2 = ["dep:r2r"]
+ttl = []
 
 [dependencies]
 r2r = { version = "0.9", optional = true }
@@ -41,6 +42,8 @@ argon2 = "0.5"
 jsonwebtoken = "9"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }
+axum = "0.7"
+byteorder = "1.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

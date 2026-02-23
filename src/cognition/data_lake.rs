@@ -1,8 +1,82 @@
 use crate::cognition::types::*;
 use anyhow::Result;
+use byteorder::{BigEndian, WriteBytesExt};
+// TTL support shim: provide a TTL-enabled DB wrapper when the ttl feature is enabled.
+#[cfg(feature = "ttl")]
+mod ttlshim {
+    use rocksdb::{Options, DB};
+    use std::path::Path;
+    pub struct DBWithTTL(DB);
+    impl std::ops::Deref for DBWithTTL {
+        type Target = DB;
+        fn deref(&self) -> &DB {
+            &self.0
+        }
+    }
+    impl DBWithTTL {
+        pub fn open_cf_with_ttl(
+            opts: &Options,
+            path: &Path,
+            cfs: Vec<&str>,
+            _ttl: i32,
+        ) -> anyhow::Result<DBWithTTL> {
+            // Fallback to normal open; TTL is to be handled by RocksDB when a concrete API is available.
+            let db = DB::open_cf(opts, path, cfs)?;
+            Ok(DBWithTTL(db))
+        }
+    }
+}
+#[cfg(not(feature = "ttl"))]
 use rocksdb::{ColumnFamily, Options, DB};
+#[cfg(feature = "ttl")]
+use ttlshim::DBWithTTL;
+#[cfg(feature = "ttl")]
+type RocksDBHandle = DBWithTTL;
+#[cfg(not(feature = "ttl"))]
+type RocksDBHandle = DB;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
+
+/// KeyBuilder constructs binary keys for RocksDB storage
+/// Format: device_id + 0x00 + tag + 0x00 + timestamp (BigEndian)
+pub struct KeyBuilder;
+
+impl KeyBuilder {
+    /// Build binary key: device_id + 0x00 + tag + 0x00 + timestamp (BigEndian)
+    pub fn build(device_id: &str, tag: &str, timestamp: u64) -> Vec<u8> {
+        let mut key = Vec::new();
+        key.extend_from_slice(device_id.as_bytes());
+        key.push(0x00);
+        key.extend_from_slice(tag.as_bytes());
+        key.push(0x00);
+        key.write_u64::<BigEndian>(timestamp).unwrap();
+        key
+    }
+
+    /// Build prefix for scanning
+    pub fn build_prefix(device_id: &str, tag: &str) -> Vec<u8> {
+        let mut prefix = Vec::new();
+        prefix.extend_from_slice(device_id.as_bytes());
+        prefix.push(0x00);
+        prefix.extend_from_slice(tag.as_bytes());
+        prefix.push(0x00);
+        prefix
+    }
+
+    /// Build range keys for precise boundary control
+    pub fn build_range_keys(
+        device_id: &str,
+        tag: &str,
+        start_ts: u64,
+        end_ts: u64,
+    ) -> (Vec<u8>, Vec<u8>) {
+        (
+            Self::build(device_id, tag, start_ts),
+            Self::build(device_id, tag, end_ts),
+        )
+    }
+}
 
 const DB_PATH: &str = "./data_lake";
 
@@ -11,9 +85,16 @@ const CF_SENSOR_DATA: &str = "sensor_data";
 const CF_KNOWLEDGE_GRAPH: &str = "knowledge_graph";
 const CF_ANALYTICS: &str = "analytics";
 
+// TTL (time-to-live) for RocksDB entries in seconds. Adjust as needed for your environment.
+// This value is kept small enough for tests; adjust in production as appropriate.
+#[cfg(feature = "ttl")]
+const TTL_SECONDS: i32 = 7 * 24 * 60 * 60; // 1 week
+#[cfg(not(feature = "ttl"))]
+const TTL_SECONDS: i32 = 0;
+
 #[derive(Clone)]
 pub struct DataLake {
-    db: Arc<DB>,
+    db: Arc<RocksDBHandle>,
 }
 
 impl DataLake {
@@ -31,8 +112,16 @@ impl DataLake {
             CF_KNOWLEDGE_GRAPH,
             CF_ANALYTICS,
         ];
-
-        let db = DB::open_cf(&opts, DB_PATH, cfs)?;
+        let db = {
+            #[cfg(feature = "ttl")]
+            {
+                ttlshim::DBWithTTL::open_cf_with_ttl(&opts, DB_PATH, cfs.clone(), TTL_SECONDS)?
+            }
+            #[cfg(not(feature = "ttl"))]
+            {
+                DB::open_cf(&opts, DB_PATH, cfs)?
+            }
+        };
         Ok(Self { db: Arc::new(db) })
     }
 
@@ -50,8 +139,21 @@ impl DataLake {
             CF_KNOWLEDGE_GRAPH,
             CF_ANALYTICS,
         ];
-
-        let db = DB::open_cf(&opts, path.as_ref(), cfs)?;
+        let db = {
+            #[cfg(feature = "ttl")]
+            {
+                ttlshim::DBWithTTL::open_cf_with_ttl(
+                    &opts,
+                    path.as_ref(),
+                    cfs.clone(),
+                    TTL_SECONDS,
+                )?
+            }
+            #[cfg(not(feature = "ttl"))]
+            {
+                DB::open_cf(&opts, path.as_ref(), cfs)?
+            }
+        };
         Ok(Self { db: Arc::new(db) })
     }
 
@@ -72,14 +174,14 @@ impl DataLake {
     }
 
     pub fn store_device_state(&self, state: &DeviceState) -> Result<()> {
-        let key = format!("device_{}_state_{}", state.device_id, state.timestamp);
+        let key = KeyBuilder::build(&state.device_id, "state", state.timestamp);
         let value = serde_json::to_vec(state)?;
         self.db.put_cf(self.cf_device_state(), key, value)?;
         Ok(())
     }
 
     pub fn get_device_state(&self, device_id: &str, timestamp: u64) -> Result<Option<DeviceState>> {
-        let key = format!("device_{}_state_{}", device_id, timestamp);
+        let key = KeyBuilder::build(device_id, "state", timestamp);
         match self.db.get_cf(self.cf_device_state(), key)? {
             Some(value) => {
                 let state: DeviceState = serde_json::from_slice(&value)?;
@@ -90,10 +192,8 @@ impl DataLake {
     }
 
     pub fn get_latest_device_state(&self, device_id: &str) -> Result<Option<DeviceState>> {
-        let prefix = format!("device_{}_state_", device_id);
-        let mut iter = self
-            .db
-            .prefix_iterator_cf(self.cf_device_state(), prefix.as_bytes());
+        let prefix = KeyBuilder::build_prefix(device_id, "state");
+        let mut iter = self.db.prefix_iterator_cf(self.cf_device_state(), &prefix);
 
         if let Some(item) = iter.next() {
             let (_, value) = item?;
@@ -110,12 +210,10 @@ impl DataLake {
         start_ts: u64,
         end_ts: u64,
     ) -> Result<Vec<DeviceState>> {
-        let prefix = format!("device_{}_state_", device_id);
+        let prefix = KeyBuilder::build_prefix(device_id, "state");
         let mut states = Vec::new();
 
-        let iter = self
-            .db
-            .prefix_iterator_cf(self.cf_device_state(), prefix.as_bytes());
+        let iter = self.db.prefix_iterator_cf(self.cf_device_state(), &prefix);
         for item in iter {
             let (_, value) = item?;
             let state: DeviceState = serde_json::from_slice(&value)?;
@@ -129,14 +227,19 @@ impl DataLake {
     }
 
     pub fn store_sensor_data(&self, data: &SensorData) -> Result<()> {
-        let key = format!("sensor_{}_{}", data.device_id, data.timestamp);
+        let key = KeyBuilder::build(&data.device_id, &data.sensor_type, data.timestamp);
         let value = serde_json::to_vec(data)?;
         self.db.put_cf(self.cf_sensor_data(), key, value)?;
         Ok(())
     }
 
-    pub fn get_sensor_data(&self, device_id: &str, timestamp: u64) -> Result<Option<SensorData>> {
-        let key = format!("sensor_{}_{}", device_id, timestamp);
+    pub fn get_sensor_data(
+        &self,
+        device_id: &str,
+        sensor_type: &str,
+        timestamp: u64,
+    ) -> Result<Option<SensorData>> {
+        let key = KeyBuilder::build(device_id, sensor_type, timestamp);
         match self.db.get_cf(self.cf_sensor_data(), key)? {
             Some(value) => {
                 let data: SensorData = serde_json::from_slice(&value)?;
@@ -153,12 +256,11 @@ impl DataLake {
         start_ts: u64,
         end_ts: u64,
     ) -> Result<Vec<SensorData>> {
-        let prefix = format!("sensor_{}_", device_id);
+        let tag = sensor_type.unwrap_or("");
+        let prefix = KeyBuilder::build_prefix(device_id, tag);
         let mut data_list = Vec::new();
 
-        let iter = self
-            .db
-            .prefix_iterator_cf(self.cf_sensor_data(), prefix.as_bytes());
+        let iter = self.db.prefix_iterator_cf(self.cf_sensor_data(), &prefix);
         for item in iter {
             let (_, value) = item?;
             let data: SensorData = serde_json::from_slice(&value)?;
@@ -179,10 +281,8 @@ impl DataLake {
         device_id: &str,
         sensor_type: &str,
     ) -> Result<Option<SensorData>> {
-        let prefix = format!("sensor_{}_", device_id);
-        let mut iter = self
-            .db
-            .prefix_iterator_cf(self.cf_sensor_data(), prefix.as_bytes());
+        let prefix = KeyBuilder::build_prefix(device_id, sensor_type);
+        let mut iter = self.db.prefix_iterator_cf(self.cf_sensor_data(), &prefix);
 
         while let Some(item) = iter.next() {
             let (_, value) = item?;

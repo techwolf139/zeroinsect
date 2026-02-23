@@ -17,6 +17,7 @@ pub mod router;
 pub mod types;
 pub mod llm;
 pub mod adapters;
+pub mod cognition;
 
 pub use types::message::ChatMessage;
 pub use types::user::UserProfile;
