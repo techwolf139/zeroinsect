@@ -2,7 +2,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use super::prompts::{PROMPT_INTENT_PARSING, PROMPT_SCHEMA_MATCHING};
-use super::types::{CommandResult, Intent};
+use super::types::Intent;
 
 #[derive(Debug, Deserialize)]
 struct OllamaResponse {
